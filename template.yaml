@@ -1,0 +1,363 @@
+# This is the SAM template that represents the architecture of your serverless application
+# https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-template-basics.html
+
+# The AWSTemplateFormatVersion identifies the capabilities of the template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/format-version-structure.html
+AWSTemplateFormatVersion: 2010-09-09
+
+# Transform section specifies one or more macros that AWS CloudFormation uses to process your template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-section-structure.html
+Transform:
+- AWS::Serverless-2016-10-31
+
+Globals:
+  Function:
+    # note that the function timeout is less than SQS message timeout
+    Timeout: 30
+    Handler: app.handler
+    Runtime: nodejs14.x
+    Tracing: Active
+    Layers:
+      - !Ref LambdaDependenciesLayer
+
+# Resources declares the AWS resources that you want to include in the stack
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resources-section-structure.html
+Resources:
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: API POLLER EXAMPLE
+  
+Resources:
+
+  # ROLES
+  PollerEventBusRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: DirectlyInvokeStepFunctions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              Action:
+              - "states:StartExecution"
+              Effect: Allow
+              Resource:
+                - !Ref PollerStateMachine
+
+  PollerHttpApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal: 
+            Service: "apigateway.amazonaws.com"
+          Action:
+          - "sts:AssumeRole"
+      Policies:
+      - PolicyName: HttpApiDirectWriteToEventBridge
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            Action:
+            - "events:PutEvents"
+            Effect: Allow
+            Resource:
+              - !GetAtt PollerEventBus.Arn
+      - PolicyName: PollerApiDirectInvokeLambda
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            Action:
+            - "lambda:InvokeFunction"
+            Effect: Allow
+            Resource:
+              - !GetAtt JobsGetJobSummaryFunction.Arn
+
+  ExternalHttpApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal: 
+            Service: "apigateway.amazonaws.com"
+          Action:
+          - "sts:AssumeRole"
+      Policies:
+      - PolicyName: RestApiDirectInvokeLambda
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            Action:
+            - "lambda:InvokeFunction"
+            Effect: Allow
+            Resource:
+              - !GetAtt PayloadGeneratorFunction.Arn
+
+  # EVENT BUS
+
+  PollerEventBus:
+    Type: AWS::Events::EventBus
+    Properties: 
+      Name: PollerEventBus
+
+  PollerEventBusDefaultRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Default Rule for Any event"
+      State: ENABLED
+      EventBusName: !Ref PollerEventBus
+      EventPattern:
+        source:
+          - "source.events"
+        detail-type:
+          - "api.event"
+      Targets:
+        - 
+          Arn: !GetAtt PollerStateMachine.Arn 
+          Id: "PollerStateMachineTarget"
+          RoleArn: !GetAtt PollerEventBusRole.Arn
+
+  # LAMBDA LAYERS
+
+  LambdaDependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Description: Runtime dependencies for Lambdas
+      ContentUri: ./
+      CompatibleRuntimes:
+        - nodejs14.x
+      RetentionPolicy: Delete
+
+  # POLLER JOB/TASKS DDB TABLE
+
+  PollerTasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      KeySchema:
+        - AttributeName: JobId
+          KeyType: HASH
+        - AttributeName: TaskId
+          KeyType: RANGE
+      AttributeDefinitions:
+        - AttributeName: JobId
+          AttributeType: S
+        - AttributeName: TaskId
+          AttributeType: S
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      TimeToLiveSpecification:
+        AttributeName: TimeToLive
+        Enabled: true
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  # POLLER PAYLOAD BUCKET
+
+  RawPayloadBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties: 
+      AccessControl: Private
+
+  # POLLER QUEUES
+
+  ProcessPayloadQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      # note that the function timeout is less than SQS message timeout
+      VisibilityTimeout: 30 # default is 30 seconds
+      DelaySeconds: 0
+      MessageRetentionPeriod: 345600
+      QueueName: process-payload-q
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ProcessPayloadDlq.Arn
+        maxReceiveCount: 3 # max times the message is delivered to the destination before considered DLQ
+
+  ProcessPayloadDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      # note that the function timeout is less than SQS message timeout
+      VisibilityTimeout: 45 # default is 30 seconds
+      DelaySeconds: 0
+      MessageRetentionPeriod: 345600
+      QueueName: process-payload-dlq
+
+  # LAMBDA - PAYLOAD PROCESSOR
+
+  PayloadProcessorFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt ProcessPayloadQueue.QueueName
+        - S3CrudPolicy:
+            BucketName: !Ref RawPayloadBucket
+        - DynamoDBWritePolicy:
+            TableName: !Ref PollerTasksTable
+      Handler: dist/handlers/payload-processor.handler
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ProcessPayloadQueue.Arn
+            BatchSize: 25
+            MaximumBatchingWindowInSeconds: 60
+      Environment:
+        Variables:
+          TASK_DDB_TABLE: !Ref PollerTasksTable
+
+  # POLLER HTTP API
+
+  PollerHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: './api-defs/poller-http-api.yaml'
+
+  # LAMBDA - GET JOB SUMMARY
+
+  JobsGetJobSummaryFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Policies:
+        DynamoDBReadPolicy:
+          TableName: !Ref PollerTasksTable
+      Handler: dist/handlers/jobs-get-job-summary.handler
+      Environment:
+        Variables:
+          TASK_DDB_TABLE: !Ref PollerTasksTable
+
+  # LOGS FOR STEP FUNCTIONS
+
+  PollerStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub "PollerStateMachineLogGroup-${AWS::StackName}"
+      RetentionInDays: 7
+              
+  # PAYLOAD PROCESSOR STATE MACHINE
+
+  PollerStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      # Type: EXPRESS
+      Type: STANDARD
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WorkflowFetchPayloadFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WorkflowPreparePollerJobFunction
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt ProcessPayloadQueue.QueueName
+        - DynamoDBWritePolicy:
+            TableName: !Ref PollerTasksTable
+        # https://docs.aws.amazon.com/step-functions/latest/dg/cw-logs.html
+        - Statement:
+          - Sid: CloudWatchLogsPolicy
+            Effect: Allow
+            Action:
+            - "logs:CreateLogDelivery"
+            - "logs:GetLogDelivery"
+            - "logs:UpdateLogDelivery"
+            - "logs:DeleteLogDelivery"
+            - "logs:ListLogDeliveries"
+            - "logs:PutResourcePolicy"
+            - "logs:DescribeResourcePolicies"
+            - "logs:DescribeLogGroup"
+            Resource: "*"
+      Tracing:
+        Enabled: true
+      DefinitionUri: statemachine/poller-state-machine.asl.yaml
+      Logging:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+        - CloudWatchLogsLogGroup:
+            LogGroupArn: !GetAtt PollerStateMachineLogGroup.Arn
+      DefinitionSubstitutions:
+        WorkflowPreparePollerJobFunction: !GetAtt WorkflowPreparePollerJobFunction.Arn
+        WorkflowFetchPayloadFunction: !GetAtt WorkflowFetchPayloadFunction.Arn
+        SQSPutItem: !Sub arn:${AWS::Partition}:states:::sqs:sendMessage
+        ProcessPayloadQueueUrl: !Ref ProcessPayloadQueue
+        PollerTasksTable: !Ref PollerTasksTable 
+        DDBPutItem: !Sub arn:${AWS::Partition}:states:::dynamodb:putItem
+
+  # PAYLOAD PROCESSOR STATE MACHINE LAMBDAS
+  WorkflowPreparePollerJobFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Handler: dist/handlers/workflow-prepare-poller-job.handler
+
+  WorkflowFetchPayloadFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref RawPayloadBucket
+      Handler: dist/handlers/workflow-fetch-payload.handler
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref ProcessPayloadQueue
+          TASK_DDB_TABLE: !Ref PollerTasksTable
+          PAYLOAD_BUCKET: !Ref RawPayloadBucket
+
+  # EXTERNAL HTTP API
+
+  ExternalHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: './api-defs/external-http-api.yaml'
+
+  PayloadGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Handler: dist/handlers/payload-generator.handler
+      Policies:
+        - AWSLambdaBasicExecutionRole
+
+Outputs:
+  PollerHttpApiUrl:
+    Description: "Url of the Poller API"
+    Value: !Sub "https://${PollerHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  ExternalHttpApiUrl:
+    Description: "Url of the External API"
+    Value: !Sub "https://${ExternalHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  RawPayloadBucket:
+    Description: "Raw payload bucket name"
+    Value: !Ref RawPayloadBucket
+  StateMachineName:
+    Description: "State Machine name"
+    Value: !GetAtt  PollerStateMachine.Name

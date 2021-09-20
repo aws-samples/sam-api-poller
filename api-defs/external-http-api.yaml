@@ -1,0 +1,33 @@
+openapi: "3.0.1"
+info:
+  title: "External Applicaton Sample HTTP API"
+  version: "2021-04-07"
+tags:
+- name: "httpapi:createdBy"
+  x-amazon-apigateway-tag-value: "SAM"
+paths:
+  /payload:
+    get:
+      x-amazon-apigateway-integration:
+        credentials:
+          Fn::GetAtt: [ExternalHttpApiRole, Arn]
+        uri: 
+          Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PayloadGeneratorFunction.Arn}/invocations
+        httpMethod: "POST"
+        type: "aws_proxy"
+        payloadFormatVersion: "2.0"
+x-amazon-apigateway-cors:
+  allowMethods:
+  - "GET"
+  - "OPTIONS"
+  - "POST"
+  allowHeaders:
+  - "authorization"
+  - "content-type"
+  - "x-amz-date"
+  - "x-amzm-header"
+  - "x-api-key"
+  - "x-apigateway-header"
+  maxAge: 60
+  allowCredentials: false
+x-amazon-apigateway-importexport-version: "1.0"
