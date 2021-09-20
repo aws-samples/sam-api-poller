@@ -212,7 +212,7 @@ Resources:
             BucketName: !Ref RawPayloadBucket
         - DynamoDBWritePolicy:
             TableName: !Ref PollerTasksTable
-      Handler: dist/handlers/payload-processor.handler
+      Handler: handlers/payload-processor.handler
       Events:
         MySQSEvent:
           Type: SQS
@@ -245,7 +245,7 @@ Resources:
       Policies:
         DynamoDBReadPolicy:
           TableName: !Ref PollerTasksTable
-      Handler: dist/handlers/jobs-get-job-summary.handler
+      Handler: handlers/jobs-get-job-summary.handler
       Environment:
         Variables:
           TASK_DDB_TABLE: !Ref PollerTasksTable
@@ -311,7 +311,7 @@ Resources:
     Metadata:
       BuildMethod: makefile
     Properties:
-      Handler: dist/handlers/workflow-prepare-poller-job.handler
+      Handler: handlers/workflow-prepare-poller-job.handler
 
   WorkflowFetchPayloadFunction:
     Type: AWS::Serverless::Function
@@ -321,7 +321,7 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref RawPayloadBucket
-      Handler: dist/handlers/workflow-fetch-payload.handler
+      Handler: handlers/workflow-fetch-payload.handler
       Environment:
         Variables:
           QUEUE_URL: !Ref ProcessPayloadQueue
@@ -344,7 +344,7 @@ Resources:
     Metadata:
       BuildMethod: makefile
     Properties:
-      Handler: dist/handlers/payload-generator.handler
+      Handler: handlers/payload-generator.handler
       Policies:
         - AWSLambdaBasicExecutionRole
 

@@ -18,7 +18,7 @@ build-lambda:
 	rm -rf dist
 	echo "{\"extends\": \"./tsconfig.json\", \"include\": [\"${HANDLER}\"] }" > tsconfig-for-handler.json
 	npm run build -- --build tsconfig-for-handler.json
-	cp -r dist "$(ARTIFACTS_DIR)/"
+	cp -r dist/. "$(ARTIFACTS_DIR)/"
 
 build-LambdaDependenciesLayer:
 	mkdir -p "$(ARTIFACTS_DIR)/nodejs"
