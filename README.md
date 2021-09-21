@@ -152,6 +152,10 @@ I also show how to perform clean-up to avoid any additional charges. You can mod
 
 For more serverless learning resources, visit [Serverless Land](https://serverlessland.com/).
 
+## References
+
+[Example project for developing AWS Lambda functions on TypeScript](https://github.com/Envek/aws-sam-typescript-layers-example)
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.

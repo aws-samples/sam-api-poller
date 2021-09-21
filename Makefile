@@ -16,8 +16,8 @@ build-JobsGetJobSummaryFunction:
 build-lambda:
 	npm install --quiet
 	rm -rf dist
-	echo "{\"extends\": \"./tsconfig.json\", \"include\": [\"${HANDLER}\"] }" > tsconfig-for-handler.json
-	npm run build -- --build tsconfig-for-handler.json
+	echo "{\"extends\": \"./tsconfig.json\", \"include\": [\"${HANDLER}\"] }" > tsconfig-lambda.json
+	npm run build -- --build tsconfig-lambda.json
 	cp -r dist/. "$(ARTIFACTS_DIR)/"
 
 build-LambdaDependenciesLayer:
