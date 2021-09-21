@@ -154,6 +154,7 @@ For more serverless learning resources, visit [Serverless Land](https://serverle
 
 ## References
 
+AWS SAM CLI: [Using TypeScript with nodejs runtime](https://github.com/aws/aws-sam-cli/issues/2636)
 [Example project for developing AWS Lambda functions on TypeScript](https://github.com/Envek/aws-sam-typescript-layers-example)
 
 ## Security
