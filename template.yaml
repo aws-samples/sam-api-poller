@@ -287,6 +287,7 @@ Resources:
             - "logs:PutResourcePolicy"
             - "logs:DescribeResourcePolicies"
             - "logs:DescribeLogGroup"
+            - "logs:DescribeLogGroups"
             Resource: "*"
       Tracing:
         Enabled: true
